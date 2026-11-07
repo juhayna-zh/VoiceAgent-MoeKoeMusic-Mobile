@@ -244,4 +244,9 @@ export function useIsLiked(hash: string | undefined): boolean {
   );
 }
 
+/** 供非 React 环境（如语音工具执行器）同步查询某首歌是否已在「我喜欢」。 */
+export function isTrackLiked(hash: string | undefined): boolean {
+  return hash ? state.liked[hash] !== undefined : false;
+}
+
 export type { LibraryPlaylist };

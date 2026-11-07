@@ -10,7 +10,8 @@ import { playerActions } from '@/features/player/store';
 import { MicCapture, PcmPlayer } from './audio-pipeline';
 import { GcpClient } from './gcp-client';
 import { readVoiceAgentConfig } from './settings-storage';
-import type { GcpServerEvent, TranscriptEntry, VoiceAgentStatus } from './types';
+import { executeTool, type ToolResult } from './tools';
+import type { GcpServerEvent, ToolCallDetail, TranscriptEntry, VoiceAgentStatus } from './types';
 
 /** 暂停语音后把 iOS 音频会话交还 expo-audio 的播放配置（与 player/store 一致）。 */
 const PLAYBACK_AUDIO_MODE = {
@@ -141,6 +142,51 @@ function clearPlayback() {
   player?.clear();
 }
 
+/** 把一次工具调用追加到对话流，方便实时核对模型调了哪个工具、参数与结果。 */
+function appendToolTranscript(
+  requestEventId: string,
+  fullName: string,
+  args: unknown,
+  result: ToolResult,
+) {
+  const toolName = fullName.replace(/^client\.tool\./, '');
+  let argText = '';
+  if (args && typeof args === 'object' && Object.keys(args as object).length) {
+    try {
+      argText = ` ${JSON.stringify(args)}`;
+    } catch {
+      argText = '';
+    }
+  }
+  const outcome =
+    result.status === 'completed'
+      ? '✓'
+      : `${result.status}: ${result.error?.message ?? ''}`.trim();
+  const text = `🔧 ${toolName}${argText} → ${outcome}`;
+  const detail: ToolCallDetail = {
+    name: toolName,
+    args: args ?? undefined,
+    status: result.status,
+    ...('output' in result ? { output: result.output } : {}),
+    ...('error' in result ? { error: result.error } : {}),
+  };
+  const transcripts = [...voiceAgentStore.getState().transcripts];
+  const index = transcripts.findIndex((entry) => entry.id === `tool:${requestEventId}`);
+  const entry: TranscriptEntry = {
+    id: `tool:${requestEventId}`,
+    role: 'tool',
+    text,
+    final: true,
+    tool: detail,
+  };
+  if (index < 0) {
+    transcripts.push(entry);
+  } else {
+    transcripts[index] = entry;
+  }
+  voiceAgentStore.setState({ transcripts });
+}
+
 function handleEvent(event: GcpServerEvent) {
   switch (event.type) {
     case 'voice.ready':
@@ -208,6 +254,26 @@ function handleEvent(event: GcpServerEvent) {
         status: 'error',
         error: code ? `${detail}（${code}）` : String(detail),
       });
+      break;
+    }
+    case 'client.action.request': {
+      // 模型调用前端注册的工具：本地执行后把结果回传 Gateway（client.action.result）。
+      // 部分工具（如点喜欢）涉及网络、返回 Promise，统一在此解析后再回传。
+      const requestEventId = String(event.event_id ?? '');
+      const fullName = String(event.name ?? '');
+      const args = event.arguments;
+      void Promise.resolve(executeTool(fullName, args))
+        .catch((error): ToolResult => ({
+          status: 'failed',
+          error: {
+            code: 'tool_error',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        }))
+        .then((result) => {
+          appendToolTranscript(requestEventId, fullName, args, result);
+          client?.sendClientActionResult(requestEventId, result);
+        });
       break;
     }
     default:

@@ -101,8 +101,24 @@ const LOCK_SCREEN_OPTIONS: AudioLockScreenOptions = {
   showSeekBackward: true,
 };
 
-/** 语音助手说话时把音乐压到此音量，说完恢复 1.0。 */
+/** 语音助手说话时把音乐压到此音量，说完恢复用户音量。 */
 const MUSIC_DUCK_VOLUME = 0.35;
+
+// 用户设定的音量与「是否正在被语音助手闪避」分开保存，二者共同决定实际音量，
+// 这样助手说完恢复的是用户音量而不是硬编码的 1.0。
+let userVolume = 1;
+let musicDucked = false;
+
+function clampVolume(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function applyVolume(): void {
+  if (!audioPlayer) {
+    return;
+  }
+  audioPlayer.volume = musicDucked ? Math.min(userVolume, MUSIC_DUCK_VOLUME) : userVolume;
+}
 
 function lockScreenMetadataFor(track: PlayerTrack): AudioMetadata {
   return {
@@ -120,6 +136,7 @@ function ensureAudioPlayer(): AudioPlayer {
 
   audioPlayer = createAudioPlayer(null, { updateInterval: 500 });
   audioPlayer.addListener('playbackStatusUpdate', handlePlaybackStatus);
+  applyVolume();
   void setAudioModeAsync({
     playsInSilentMode: true,
     shouldPlayInBackground: true,
@@ -363,28 +380,37 @@ export const playerActions = {
     playerStore.getState().track && audioPlayer?.pause();
   },
 
-  toggle() {
-    const { track, playing, loading, error } = playerStore.getState();
+  /** 开始/继续播放（幂等）：若已接近结尾则从头播。 */
+  play() {
+    const { track, loading, error, index } = playerStore.getState();
     if (!track || loading) {
       return;
     }
 
     if (error) {
-      void loadTrackAt(playerStore.getState().index);
+      void loadTrackAt(index);
       return;
     }
 
     const player = ensureAudioPlayer();
-    if (playing) {
-      player.pause();
-      return;
-    }
-
     const { positionMs, durationMs } = progressStore.getState();
     if (durationMs > 0 && positionMs >= durationMs - 300) {
       void player.seekTo(0);
     }
     player.play();
+  },
+
+  toggle() {
+    const { track, playing, loading } = playerStore.getState();
+    if (!track || loading) {
+      return;
+    }
+
+    if (playing) {
+      playerActions.pause();
+      return;
+    }
+    playerActions.play();
   },
 
   next() {
@@ -470,14 +496,79 @@ export const playerActions = {
     progressStore.setState(INITIAL_PROGRESS_STATE);
   },
 
-  /** 语音助手说话时压低音乐音量，说完恢复。 */
+  /** 语音助手说话时压低音乐音量，说完恢复用户音量。 */
   setMusicDucked(ducked: boolean) {
-    if (!audioPlayer) {
-      return;
-    }
-    audioPlayer.volume = ducked ? MUSIC_DUCK_VOLUME : 1;
+    musicDucked = ducked;
+    applyVolume();
+  },
+
+  /** 设置用户音量（0-1）；未被闪避时立即生效。 */
+  setVolume(volume: number) {
+    userVolume = clampVolume(volume);
+    applyVolume();
   },
 };
+
+export type PlayerSnapshot = {
+  track: PlayerTrack | null;
+  playing: boolean;
+  mode: PlayMode;
+  positionMs: number;
+  durationMs: number;
+  volume: number;
+  queueIndex: number;
+  queueLength: number;
+};
+
+/** 供非 React 环境（如语音工具执行器）读取当前播放状态快照。 */
+export function getPlayerSnapshot(): PlayerSnapshot {
+  const state = playerStore.getState();
+  const progress = progressStore.getState();
+  return {
+    track: state.track,
+    playing: state.playing,
+    mode: state.mode,
+    positionMs: progress.positionMs,
+    durationMs: progress.durationMs,
+    volume: audioPlayer?.volume ?? userVolume,
+    queueIndex: state.index,
+    queueLength: state.queue.length,
+  };
+}
+
+export type QueueWindowItem = {
+  index: number;
+  title: string;
+  artist: string;
+  durationMs: number | null;
+};
+
+/** 供非 React 环境读取已加载的歌词（未加载时 status 非 'ready'、lines 为空）。 */
+export function getLyricsSnapshot(): { lines: LyricLine[]; status: LyricsStatus } {
+  const state = playerStore.getState();
+  return { lines: state.lyrics, status: state.lyricsStatus };
+}
+
+export type QueueWindow = {
+  total: number;
+  currentIndex: number;
+  offset: number;
+  items: QueueWindowItem[];
+};
+
+/** 有界地取出队列中的一段曲目（含绝对下标），供语音助手分页播报。 */
+export function getQueueWindow(offset: number, limit: number): QueueWindow {
+  const { queue, index } = playerStore.getState();
+  const start = Math.max(0, Math.min(offset, queue.length));
+  const end = Math.min(queue.length, start + Math.max(1, limit));
+  const items = queue.slice(start, end).map((track, position) => ({
+    index: start + position,
+    title: track.title,
+    artist: track.artist,
+    durationMs: track.durationMs ?? null,
+  }));
+  return { total: queue.length, currentIndex: index, offset: start, items };
+}
 
 export function usePlayer(): PlayerState {
   return useSyncExternalStore(

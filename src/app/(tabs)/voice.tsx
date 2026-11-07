@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FlatList, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Spinner, Text, View, XStack, YStack } from 'tamagui';
@@ -21,12 +21,22 @@ const STATUS_TEXT: Record<VoiceAgentStatus, string> = {
   error: '连接失败',
 };
 
+function formatJson(value: unknown): string {
+  if (value === undefined || value === null) return '—';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 export default function VoiceTab() {
   const palette = usePalette();
   const insets = useSafeAreaInsets();
   const dockInset = useDockContentInset();
   const { status, error, micError, transcripts } = useVoiceAgentState();
   const listRef = useRef<FlatList<TranscriptEntry>>(null);
+  const [expandedTool, setExpandedTool] = useState<string | null>(null);
 
   const active = isVoiceActive(status);
 
@@ -125,28 +135,82 @@ export default function VoiceTab() {
                   </Text>
                 </YStack>
               }
-              renderItem={({ item }) => (
-                <XStack justifyContent={item.role === 'user' ? 'flex-end' : 'flex-start'}>
-                  <YStack
-                    maxWidth="80%"
-                    paddingHorizontal={14}
-                    paddingVertical={9}
-                    borderRadius={16}
-                    borderBottomRightRadius={item.role === 'user' ? 6 : 16}
-                    borderBottomLeftRadius={item.role === 'user' ? 16 : 6}
-                    backgroundColor={item.role === 'user' ? palette.accent : palette.card}
-                    borderWidth={item.role === 'user' ? 0 : StyleSheet.hairlineWidth}
-                    borderColor={palette.border}
-                    opacity={item.final ? 1 : 0.65}>
-                    <Text
-                      fontSize={14.5}
-                      lineHeight={21}
-                      color={item.role === 'user' ? '#fff' : palette.text}>
-                      {item.text}
-                    </Text>
-                  </YStack>
-                </XStack>
-              )}
+              renderItem={({ item }) => {
+                if (item.role === 'tool') {
+                  const expanded = expandedTool === item.id;
+                  const detail = item.tool;
+                  return (
+                    <XStack justifyContent="center">
+                      <YStack
+                        maxWidth="92%"
+                        paddingHorizontal={10}
+                        paddingVertical={6}
+                        borderRadius={8}
+                        backgroundColor={palette.accentSoft}
+                        borderWidth={StyleSheet.hairlineWidth}
+                        borderColor={palette.border}
+                        transition="quickest"
+                        pressStyle={{ opacity: 0.7 }}
+                        onPress={() => setExpandedTool(expanded ? null : item.id)}>
+                        <XStack alignItems="center" gap={6}>
+                          <Text flexShrink={1} fontSize={11.5} lineHeight={16} color={palette.textSecondary}>
+                            {item.text}
+                          </Text>
+                          <Ionicons
+                            name={expanded ? 'chevron-up' : 'chevron-down'}
+                            size={12}
+                            color={palette.textTertiary}
+                          />
+                        </XStack>
+                        {expanded && detail ? (
+                          <YStack marginTop={8} gap={8}>
+                            <YStack gap={2}>
+                              <Text fontSize={10.5} fontWeight="700" color={palette.textTertiary}>
+                                入参
+                              </Text>
+                              <Text fontSize={11} lineHeight={16} color={palette.text}>
+                                {formatJson(detail.args)}
+                              </Text>
+                            </YStack>
+                            <YStack gap={2}>
+                              <Text fontSize={10.5} fontWeight="700" color={palette.textTertiary}>
+                                结果 · {detail.status}
+                              </Text>
+                              <Text fontSize={11} lineHeight={16} color={palette.text}>
+                                {detail.status === 'completed'
+                                  ? formatJson(detail.output)
+                                  : formatJson(detail.error)}
+                              </Text>
+                            </YStack>
+                          </YStack>
+                        ) : null}
+                      </YStack>
+                    </XStack>
+                  );
+                }
+                return (
+                  <XStack justifyContent={item.role === 'user' ? 'flex-end' : 'flex-start'}>
+                    <YStack
+                      maxWidth="80%"
+                      paddingHorizontal={14}
+                      paddingVertical={9}
+                      borderRadius={16}
+                      borderBottomRightRadius={item.role === 'user' ? 6 : 16}
+                      borderBottomLeftRadius={item.role === 'user' ? 16 : 6}
+                      backgroundColor={item.role === 'user' ? palette.accent : palette.card}
+                      borderWidth={item.role === 'user' ? 0 : StyleSheet.hairlineWidth}
+                      borderColor={palette.border}
+                      opacity={item.final ? 1 : 0.65}>
+                      <Text
+                        fontSize={14.5}
+                        lineHeight={21}
+                        color={item.role === 'user' ? '#fff' : palette.text}>
+                        {item.text}
+                      </Text>
+                    </YStack>
+                  </XStack>
+                );
+              }}
             />
 
             <YStack

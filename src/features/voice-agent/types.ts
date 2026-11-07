@@ -7,11 +7,21 @@ export type VoiceAgentStatus =
   | 'speaking'
   | 'error';
 
+export type ToolCallDetail = {
+  name: string;
+  args?: unknown;
+  status: 'completed' | 'failed' | 'unsupported';
+  output?: unknown;
+  error?: { code: string; message: string };
+};
+
 export type TranscriptEntry = {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   text: string;
   final: boolean;
+  /** 仅 role==='tool' 时存在：完整的入参与返回结果，供对话界面点击展开核对。 */
+  tool?: ToolCallDetail;
 };
 
 // GCP 7.0 上行事件（docs/gateway-protocol.zh.md）
@@ -62,5 +72,8 @@ export type GcpServerEvent = {
   // voice.state（state: listening/thinking/speaking…）/ playback.clear（reason）
   state?: string;
   reason?: string;
+  // client.action.request：name 形如 `client.tool.player_control`，arguments 为模型给出的参数
+  name?: string;
+  arguments?: unknown;
   [key: string]: unknown;
 };

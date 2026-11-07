@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 
+import { VOICE_TOOLS, type ToolResult } from './tools';
 import type { GcpServerEvent } from './types';
 
 export type GcpClientOptions = {
@@ -71,7 +72,8 @@ export class GcpClient {
             version: String(Constants.expoConfig?.version ?? '0.0.0'),
             instance_id: INSTANCE_ID,
           },
-          capabilities: ['input.audio', 'input.text', 'session.heartbeat'],
+          capabilities: ['input.audio', 'input.text', 'session.heartbeat', 'client.tools'],
+          tools: VOICE_TOOLS,
           locale: 'zh-CN',
           time_zone: 'Asia/Shanghai',
           connection: {
@@ -130,6 +132,21 @@ export class GcpClient {
 
   cancelResponse(responseId?: string): void {
     this.send({ type: 'response.cancel', event_id: nextEventId(), responseId });
+  }
+
+  /** 回发一次 client tool 调用结果（对应 Gateway 的 client.action.request）。 */
+  sendClientActionResult(requestEventId: string, result: ToolResult): void {
+    if (!requestEventId) {
+      return;
+    }
+    this.send({
+      type: 'client.action.result',
+      event_id: nextEventId(),
+      request_event_id: requestEventId,
+      status: result.status,
+      ...('output' in result && result.output !== undefined ? { output: result.output } : {}),
+      ...('error' in result && result.error ? { error: result.error } : {}),
+    });
   }
 
   disconnect(): void {
