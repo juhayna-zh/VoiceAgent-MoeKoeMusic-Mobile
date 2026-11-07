@@ -101,6 +101,9 @@ const LOCK_SCREEN_OPTIONS: AudioLockScreenOptions = {
   showSeekBackward: true,
 };
 
+/** 语音助手说话时把音乐压到此音量，说完恢复 1.0。 */
+const MUSIC_DUCK_VOLUME = 0.35;
+
 function lockScreenMetadataFor(track: PlayerTrack): AudioMetadata {
   return {
     title: track.title,
@@ -465,6 +468,14 @@ export const playerActions = {
       mode: playerStore.getState().mode,
     });
     progressStore.setState(INITIAL_PROGRESS_STATE);
+  },
+
+  /** 语音助手说话时压低音乐音量，说完恢复。 */
+  setMusicDucked(ducked: boolean) {
+    if (!audioPlayer) {
+      return;
+    }
+    audioPlayer.volume = ducked ? MUSIC_DUCK_VOLUME : 1;
   },
 };
 

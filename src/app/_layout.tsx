@@ -8,6 +8,7 @@ import { TamaguiProvider } from 'tamagui';
 
 import { hydrateSettings, useSettingsHydrated } from '@/features/settings/store';
 import { ToastHost } from '@/components/ui/toast';
+import { VoiceOrb } from '@/components/ui/voice-orb';
 import { useEffectiveScheme, usePalette } from '@/hooks/use-palette';
 import { tamaguiConfig } from '../../tamagui.config';
 
@@ -118,6 +119,7 @@ export default function RootLayout() {
           />
         </Stack>
         <ToastHost />
+        <VoiceOrb />
         <StatusBar style={isDark ? 'light' : 'dark'} />
       </ThemeProvider>
     </TamaguiProvider>

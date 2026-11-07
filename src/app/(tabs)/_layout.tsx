@@ -7,25 +7,45 @@ import { Text, YStack } from 'tamagui';
 
 import { MiniPlayer } from '@/components/ui/mini-player';
 import { TabBarHeight, TabBarSideMargin } from '@/constants/layout';
+import { isVoiceActive, useVoiceAgentState } from '@/features/voice-agent/store';
 import { useIsDark, usePalette } from '@/hooks/use-palette';
 
-type TabGlyph = 'home' | 'compass' | 'person';
+type TabGlyph = 'home' | 'compass' | 'person' | 'chatbubble-ellipses';
 
 function TabItem({
   focused,
   glyph,
   label,
+  badge,
 }: {
   focused: boolean;
   glyph: TabGlyph;
   label: string;
+  badge?: boolean;
 }) {
   const palette = usePalette();
   const tint = focused ? palette.accent : palette.textTertiary;
 
   return (
     <YStack alignItems="center" justifyContent="center" gap={3} minWidth={58} paddingTop={4}>
-      <Ionicons name={focused ? glyph : (`${glyph}-outline` as const)} size={22} color={tint} />
+      <View>
+        <Ionicons name={focused ? glyph : (`${glyph}-outline` as const)} size={22} color={tint} />
+        {badge ? (
+          <View
+            style={{
+              position: 'absolute',
+              top: -1,
+              right: -5,
+              width: 7,
+              height: 7,
+              borderRadius: 4,
+              backgroundColor: '#ff453a',
+              borderWidth: 1.5,
+              borderColor: palette.barSurface,
+            }}
+          />
+        ) : null}
+      </View>
       <Text color={tint} fontSize={10.5} fontWeight={focused ? '700' : '600'}>
         {label}
       </Text>
@@ -39,6 +59,8 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const { status } = useVoiceAgentState();
+  const voiceActive = isVoiceActive(status);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -92,6 +114,20 @@ export default function TabsLayout() {
           options={{
             title: '发现',
             tabBarIcon: ({ focused }) => <TabItem focused={focused} glyph="compass" label="发现" />,
+          }}
+        />
+        <Tabs.Screen
+          name="voice"
+          options={{
+            title: 'Agent',
+            tabBarIcon: ({ focused }) => (
+              <TabItem
+                focused={focused}
+                glyph="chatbubble-ellipses"
+                label="Agent"
+                badge={voiceActive}
+              />
+            ),
           }}
         />
         <Tabs.Screen

@@ -4,6 +4,9 @@ import type { PlayerTrack } from '@/features/player/types';
 import { pickNumber, pickStringLike, pickText, toRecord, toRecords } from '@/lib/api-parse';
 import { normalizeDurationMs, sizedImage } from '@/lib/format';
 import { bootstrapMobileApi, mobileApi } from '@/lib/kugou-api';
+import { chunkToMono, resampleLinear, type PcmChunk } from '@/lib/pcm';
+
+export type { PcmChunk } from '@/lib/pcm';
 
 /** 酷狗指纹服务要求的采样格式：8kHz / 单声道 / 16 位小端 PCM。 */
 export const RECOGNIZE_SAMPLE_RATE = 8000;
@@ -14,51 +17,6 @@ export type RecognizeMatch = {
   confidence: number;
   track: PlayerTrack;
 };
-
-export type PcmChunk = {
-  data: ArrayBuffer;
-  /** 麦克风实际输出的采样率，可能与请求的 8kHz 不一致。 */
-  sampleRate: number;
-  channels: number;
-};
-
-function chunkToMono(chunk: PcmChunk): Int16Array {
-  const sampleCount = Math.floor(chunk.data.byteLength / 2);
-  const interleaved = new Int16Array(chunk.data, 0, sampleCount);
-  const channels = Math.max(1, chunk.channels);
-  if (channels === 1) {
-    return interleaved;
-  }
-
-  const frames = Math.floor(sampleCount / channels);
-  const mono = new Int16Array(frames);
-  for (let frame = 0; frame < frames; frame += 1) {
-    let sum = 0;
-    for (let channel = 0; channel < channels; channel += 1) {
-      sum += interleaved[frame * channels + channel];
-    }
-    mono[frame] = Math.round(sum / channels);
-  }
-  return mono;
-}
-
-function resampleLinear(samples: Int16Array, sourceRate: number, targetRate: number): Int16Array {
-  if (sourceRate === targetRate || !samples.length) {
-    return samples;
-  }
-
-  const targetLength = Math.max(1, Math.floor((samples.length * targetRate) / sourceRate));
-  const output = new Int16Array(targetLength);
-  const step = (samples.length - 1) / Math.max(1, targetLength - 1);
-  for (let index = 0; index < targetLength; index += 1) {
-    const position = index * step;
-    const left = Math.floor(position);
-    const right = Math.min(samples.length - 1, left + 1);
-    const ratio = position - left;
-    output[index] = Math.round(samples[left] * (1 - ratio) + samples[right] * ratio);
-  }
-  return output;
-}
 
 /** 把采集到的 PCM 块合并、下混为单声道并重采样到 8kHz，输出识别接口需要的字节流。 */
 export function buildRecognizePcm(chunks: PcmChunk[]): Uint8Array {

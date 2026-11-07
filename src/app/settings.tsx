@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, View, XStack, YStack } from 'tamagui';
 
@@ -13,6 +13,11 @@ import { MaxContentWidth, type SchemeName } from '@/constants/theme';
 import { isLoggedIn } from '@/features/account/user-api';
 import { libraryActions } from '@/features/library/store';
 import { settingsActions, useSettings, type ThemeMode } from '@/features/settings/store';
+import {
+  DEFAULT_GATEWAY_URL,
+  readVoiceAgentConfig,
+  writeVoiceAgentConfig,
+} from '@/features/voice-agent/settings-storage';
 import { useEffectiveScheme, usePalette } from '@/hooks/use-palette';
 import { clearApiSession } from '@/lib/kugou-api';
 
@@ -130,6 +135,97 @@ function SettingsRow({
   );
 }
 
+function VoiceAgentSection() {
+  const palette = usePalette();
+  const [gatewayUrl, setGatewayUrl] = useState(DEFAULT_GATEWAY_URL);
+  const [token, setToken] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+
+  useEffect(() => {
+    void readVoiceAgentConfig().then((config) => {
+      setGatewayUrl(config.gatewayUrl);
+      setToken(config.token ?? '');
+      setLoaded(true);
+    });
+  }, []);
+
+  function persist(nextUrl: string, nextToken: string) {
+    if (!loaded) return;
+    void writeVoiceAgentConfig({
+      gatewayUrl: nextUrl.trim() || DEFAULT_GATEWAY_URL,
+      token: nextToken.trim() || undefined,
+    });
+  }
+
+  const inputStyle = {
+    flex: 1,
+    color: palette.text,
+    fontSize: 13.5,
+    textAlignVertical: 'center' as const,
+    padding: 0,
+  };
+
+  return (
+    <YStack gap={10}>
+      <SectionHeader title="语音助手" />
+      <YStack
+        backgroundColor={palette.card}
+        borderRadius={20}
+        borderWidth={StyleSheet.hairlineWidth}
+        borderColor={palette.border}
+        paddingVertical={4}
+        overflow="hidden">
+        <XStack alignItems="center" minHeight={48} paddingHorizontal={14} gap={10}>
+          <Text flexShrink={0} color={palette.text} fontSize={14.5} fontWeight="500">
+            服务地址
+          </Text>
+          <TextInput
+            style={inputStyle}
+            value={gatewayUrl}
+            placeholder={DEFAULT_GATEWAY_URL}
+            placeholderTextColor={palette.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="done"
+            onChangeText={setGatewayUrl}
+            onEndEditing={() => persist(gatewayUrl, token)}
+          />
+        </XStack>
+        <View height={StyleSheet.hairlineWidth} backgroundColor={palette.border} marginHorizontal={14} />
+        <XStack alignItems="center" minHeight={48} paddingHorizontal={14} gap={10}>
+          <Text flexShrink={0} color={palette.text} fontSize={14.5} fontWeight="500">
+            访问令牌
+          </Text>
+          <TextInput
+            style={inputStyle}
+            value={token}
+            placeholder="模拟器本机连接可留空"
+            placeholderTextColor={palette.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={!showToken}
+            returnKeyType="done"
+            onChangeText={setToken}
+            onEndEditing={() => persist(gatewayUrl, token)}
+          />
+          <Pressable
+            hitSlop={8}
+            onPress={() => setShowToken((v) => !v)}
+            style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
+            <Ionicons
+              name={showToken ? 'eye-off-outline' : 'eye-outline'}
+              size={18}
+              color={palette.textTertiary}
+            />
+          </Pressable>
+        </XStack>
+      </YStack>
+    </YStack>
+  );
+}
+
 export default function SettingsScreen() {
   const palette = usePalette();
   const scheme = useEffectiveScheme();
@@ -231,6 +327,8 @@ export default function SettingsScreen() {
               </YStack>
             </YStack>
           </YStack>
+
+          <VoiceAgentSection />
 
           <YStack gap={10}>
             <SectionHeader title="通用" />

@@ -81,7 +81,8 @@
         }
       ],
       "expo-video",
-      "expo-asset"
+      "expo-asset",
+      "react-native-audio-api"
     ],
     "experiments": {
       "typedRoutes": true,

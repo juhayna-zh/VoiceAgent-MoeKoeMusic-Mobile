@@ -27,6 +27,7 @@ import { LyricsView } from '@/components/ui/lyrics-view';
 import { QueueSheet } from '@/components/ui/queue-sheet';
 import { showToast, ToastHost } from '@/components/ui/toast';
 import { TrackActionsSheet } from '@/components/ui/track-actions-sheet';
+import { VoiceOrb } from '@/components/ui/voice-orb';
 import { libraryActions, useIsLiked } from '@/features/library/store';
 import { playerActions, usePlayer, usePlayerProgress } from '@/features/player/store';
 import type { PlayMode } from '@/features/player/types';
@@ -466,6 +467,7 @@ export default function PlayerScreen() {
         initialView="pick"
       />
       <ToastHost />
+      <VoiceOrb />
     </View>
   );
 }
