@@ -123,6 +123,18 @@ async function loadSection<T>(label: string, runner: () => Promise<T>): Promise<
   }
 }
 
+/** 拉取「每日推荐」歌曲（打乱后取前 limit 首）。首页与语音工具共用此口径。 */
+export async function loadDailyRecommendSongs(limit = 24): Promise<HomeSong[]> {
+  await bootstrapMobileApi();
+  const response = await mobileApi.everyday_recommend({ platform: 'ios' });
+  const data = toRecord(toRecord(response.body).data);
+
+  const songs = toRecords(data.song_list)
+    .map(normalizeSong)
+    .filter((item): item is HomeSong => Boolean(item));
+  return shuffle(songs).slice(0, limit);
+}
+
 export async function loadHomeData(): Promise<HomeData> {
   await bootstrapMobileApi();
 
@@ -152,15 +164,7 @@ export async function loadHomeData(): Promise<HomeData> {
           .slice(0, 6);
       }),
       loadSection('热搜', fetchHotKeywords),
-      loadSection('每日推荐', async () => {
-        const response = await mobileApi.everyday_recommend({ platform: 'ios' });
-        const data = toRecord(toRecord(response.body).data);
-
-        const songs = toRecords(data.song_list)
-          .map(normalizeSong)
-          .filter((item): item is HomeSong => Boolean(item));
-        return shuffle(songs).slice(0, 24);
-      }),
+      loadSection('每日推荐', () => loadDailyRecommendSongs(24)),
       loadSection('推荐歌单', async () => {
         const response = await mobileApi.top_playlist({
           category_id: 0,

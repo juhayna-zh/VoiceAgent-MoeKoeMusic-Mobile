@@ -6,8 +6,12 @@ import {
   type QueueWindow,
 } from '@/features/player/store';
 import { findActiveLyricIndex, loadLyricLines } from '@/features/player/lyrics';
+import { playCollection } from '@/features/player/play-collection';
 import type { LyricLine, PlayMode, PlayerTrack } from '@/features/player/types';
 import { isTrackLiked, libraryActions } from '@/features/library/store';
+import { searchPlaylists, searchSongs } from '@/features/search/search-api';
+import { fetchPlaylistTracks } from '@/features/playlist/playlist-api';
+import { loadDailyRecommendSongs } from '@/features/home/load-home-data';
 
 /** GCP client tool 声明（shared/protocol/gateway-client-protocol.mjs: GatewayClientToolSchema）。 */
 export type ClientToolManifest = {
@@ -150,6 +154,72 @@ export const VOICE_TOOLS: ClientToolManifest[] = [
     inputSchema: EMPTY_SCHEMA,
     response_on_success: 'auto',
   },
+  {
+    name: 'music_search_songs',
+    description:
+      '按关键词搜索歌曲，返回候选列表（曲名/歌手/专辑），用于查找或让用户挑选，不会自动播放。要播放请用 music_play_songs。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '搜索关键词，如歌名、歌手，或两者组合。' },
+        limit: { type: 'integer', minimum: 1, maximum: 20, description: '返回条数，默认 8，最多 20。' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    response_on_success: 'auto',
+  },
+  {
+    name: 'music_search_playlists',
+    description:
+      '按关键词搜索歌单，返回候选列表（歌单 id/名称/创建者/歌曲数）。返回的 id 可直接用于 music_play_playlist。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '歌单搜索关键词。' },
+        limit: { type: 'integer', minimum: 1, maximum: 20, description: '返回条数，默认 8，最多 20。' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    response_on_success: 'auto',
+  },
+  {
+    name: 'music_play_songs',
+    description:
+      '搜索并播放歌曲：按 query 搜索，从第 index 个结果（默认第 1 个）开始播放，并把后续搜索结果排入队列继续播放。用户说「播放某首歌/某个歌手的歌」时用这个。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '要播放的歌曲关键词（歌名、歌手或组合）。' },
+        index: { type: 'integer', minimum: 0, description: '从第几个搜索结果开始播放，0 表示第一个，默认 0。' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    response_on_success: 'auto',
+  },
+  {
+    name: 'music_play_playlist',
+    description:
+      '播放一个歌单（把歌单曲目作为新队列从头播放）。二选一提供定位方式：id=已知歌单 id（如来自 music_search_playlists 的结果）；query=按名称搜索歌单并播放匹配到的那个（可用 index 指定第几个，默认第一个）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '歌单 id。与 query 二选一。' },
+        query: { type: 'string', description: '歌单名称关键词，用于搜索后播放。与 id 二选一。' },
+        index: { type: 'integer', minimum: 0, description: '按 query 搜索时，播放第几个结果，默认 0。' },
+      },
+      additionalProperties: false,
+    },
+    response_on_success: 'auto',
+  },
+  {
+    name: 'music_play_daily_recommend',
+    description: '播放「每日推荐」歌单（当天的个性化推荐歌曲），作为新队列从头播放。用户说「放每日推荐/今天推荐什么」时用这个。',
+    inputSchema: EMPTY_SCHEMA,
+    response_on_success: 'auto',
+  },
 ];
 
 function completed(output?: unknown): ToolResult {
@@ -206,6 +276,18 @@ function serializeQueue(window: QueueWindow) {
       artist: item.artist,
       duration_seconds: item.durationMs != null ? seconds(item.durationMs) : null,
     })),
+  };
+}
+
+/** 播放类工具执行后回报「现在在放什么」，供 agent 口头确认。 */
+function serializeNowPlaying() {
+  const snapshot = getPlayerSnapshot();
+  return {
+    now_playing: snapshot.track
+      ? { title: snapshot.track.title, artist: snapshot.track.artist }
+      : null,
+    queue_index: snapshot.queueIndex,
+    queue_length: snapshot.queueLength,
   };
 }
 
@@ -376,6 +458,140 @@ export function executeTool(fullName: string, args: unknown): ToolResult | Promi
         })
         .catch((error: unknown) =>
           failed('lyrics_error', error instanceof Error ? error.message : String(error)),
+        );
+    }
+
+    case 'music_search_songs': {
+      const query = String(params.query ?? '').trim();
+      if (!query) {
+        return failed('invalid_arguments', 'query 不能为空。');
+      }
+      const limit = clampInt(toNumber(params.limit) ?? 8, 1, 20, 8);
+      return searchSongs(query, 1)
+        .then((page): ToolResult => {
+          if (!page.tracks.length) {
+            return failed('no_results', `没有找到与「${query}」相关的歌曲。`);
+          }
+          return completed({
+            query,
+            total: page.total,
+            items: page.tracks.slice(0, limit).map((track, index) => ({
+              index,
+              title: track.title,
+              artist: track.artist,
+              album: track.album ?? null,
+            })),
+          });
+        })
+        .catch((error: unknown) =>
+          failed('search_error', error instanceof Error ? error.message : String(error)),
+        );
+    }
+
+    case 'music_search_playlists': {
+      const query = String(params.query ?? '').trim();
+      if (!query) {
+        return failed('invalid_arguments', 'query 不能为空。');
+      }
+      const limit = clampInt(toNumber(params.limit) ?? 8, 1, 20, 8);
+      return searchPlaylists(query, 1)
+        .then((page): ToolResult => {
+          if (!page.items.length) {
+            return failed('no_results', `没有找到与「${query}」相关的歌单。`);
+          }
+          return completed({
+            query,
+            total: page.total,
+            items: page.items.slice(0, limit).map((playlist, index) => ({
+              index,
+              id: playlist.id,
+              name: playlist.name,
+              creator: playlist.creator,
+              song_count: playlist.songCount,
+            })),
+          });
+        })
+        .catch((error: unknown) =>
+          failed('search_error', error instanceof Error ? error.message : String(error)),
+        );
+    }
+
+    case 'music_play_songs': {
+      const query = String(params.query ?? '').trim();
+      if (!query) {
+        return failed('invalid_arguments', 'query 不能为空。');
+      }
+      return searchSongs(query, 1)
+        .then(async (page): Promise<ToolResult> => {
+          if (!page.tracks.length) {
+            return failed('no_results', `没有找到与「${query}」相关的歌曲。`);
+          }
+          const startIndex = clampInt(toNumber(params.index) ?? 0, 0, page.tracks.length - 1, 0);
+          await playCollection({
+            tracks: page.tracks,
+            startIndex,
+            loadedPage: 1,
+            hasMore: page.hasMore,
+            loadPage: (p) => searchSongs(query, p),
+          });
+          return completed({ query, started_at_index: startIndex, ...serializeNowPlaying() });
+        })
+        .catch((error: unknown) =>
+          failed('play_error', error instanceof Error ? error.message : String(error)),
+        );
+    }
+
+    case 'music_play_playlist': {
+      const id = params.id != null ? String(params.id).trim() : '';
+      const query = params.query != null ? String(params.query).trim() : '';
+      if (Boolean(id) === Boolean(query)) {
+        return failed('invalid_arguments', '请提供 id 或 query 其中之一。');
+      }
+      return (async (): Promise<ToolResult> => {
+        let playlistId = id;
+        let playlistName = '';
+        if (!playlistId) {
+          const page = await searchPlaylists(query, 1);
+          if (!page.items.length) {
+            return failed('no_results', `没有找到与「${query}」相关的歌单。`);
+          }
+          const index = clampInt(toNumber(params.index) ?? 0, 0, page.items.length - 1, 0);
+          playlistId = page.items[index].id;
+          playlistName = page.items[index].name;
+        }
+
+        const first = await fetchPlaylistTracks(playlistId, 1);
+        if (!first.tracks.length) {
+          return failed('empty_playlist', '这个歌单没有可播放的歌曲。');
+        }
+        await playCollection({
+          tracks: first.tracks,
+          startIndex: 0,
+          loadedPage: 1,
+          hasMore: first.hasMore,
+          loadPage: (p) => fetchPlaylistTracks(playlistId, p),
+        });
+        return completed({
+          playlist: { id: playlistId, name: playlistName || first.info?.name || '' },
+          track_count: first.info?.count ?? first.tracks.length,
+          ...serializeNowPlaying(),
+        });
+      })().catch((error: unknown) =>
+        failed('play_error', error instanceof Error ? error.message : String(error)),
+      );
+    }
+
+    case 'music_play_daily_recommend': {
+      return loadDailyRecommendSongs()
+        .then(async (tracks): Promise<ToolResult> => {
+          if (!tracks.length) {
+            return failed('no_results', '暂时没有获取到每日推荐歌曲。');
+          }
+          await playerActions.playTracks(tracks, 0);
+          return completed({ count: tracks.length, ...serializeNowPlaying() });
+        })
+        .catch((error: unknown) =>
+          failed('play_error', error instanceof Error ? error.message : String(error)),
         );
     }
 
